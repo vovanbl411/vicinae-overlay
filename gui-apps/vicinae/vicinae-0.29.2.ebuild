@@ -616,7 +616,10 @@ RDEPEND="
 	typescript-extensions? ( !abi_x86_x32? ( net-libs/nodejs ) )
 "
 
-PATCHES=( "${FILESDIR}/${P}-wayland-only.patch" )
+PATCHES=(
+	"${FILESDIR}/${P}-wayland-only.patch"
+	"${FILESDIR}/${P}-destdir-install.patch"
+)
 
 src_prepare() {
 	cmake_src_prepare

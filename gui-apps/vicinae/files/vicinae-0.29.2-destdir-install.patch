@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4706552..5859bc2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -400,2 +399,0 @@ elseif(NOT APPLE)
+-	make_directory(${VICINAE_INSTALL_SHARE})
+-	file(REMOVE_RECURSE ${VICINAE_THEME_DIR})
+@@ -411 +408,0 @@ if (UNIX AND NOT APPLE)
+-	make_directory(${APP_DIR})
+@@ -416 +412,0 @@ if (UNIX AND NOT APPLE)
+-	make_directory(${ICON_DIR})
+@@ -420 +415,0 @@ if (UNIX AND NOT APPLE)
+-	make_directory(${SYSTEMD_USER_DIR})
