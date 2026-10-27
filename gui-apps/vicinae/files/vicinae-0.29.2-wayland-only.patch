@@ -1,0 +1,83 @@
+diff --git a/src/server/CMakeLists.txt b/src/server/CMakeLists.txt
+index 3742e0d..4d06437 100644
+--- a/src/server/CMakeLists.txt
++++ b/src/server/CMakeLists.txt
+@@ -203 +202,0 @@ set(SRCS
+-	src/services/clipboard/x11/x11-clipboard-server.hpp
+@@ -975,3 +973,0 @@ if (UNIX AND NOT APPLE)
+-		src/services/global-shortcuts/x11-global-shortcut-backend.hpp
+-		src/services/global-shortcuts/x11-global-shortcut-backend.cpp
+-
+@@ -995,4 +990,0 @@ if (UNIX AND NOT APPLE)
+-		src/services/window-manager/x11/x11-window-manager.cpp
+-		src/services/window-manager/x11/x11-event-listener.cpp
+-		src/services/window-manager/x11/x11-window.cpp
+-
+@@ -1008,7 +999,0 @@ if (UNIX AND NOT APPLE)
+-	# Add XCB (X11 C Bindings) library for X11 window manager support
+-	find_package(X11 REQUIRED)
+-	if (X11_FOUND)
+-		list(APPEND LIBS X11::xcb X11::xcb_keysyms X11::xcb_xkb)
+-		message(STATUS "XCB library found for X11 window manager support")
+-	endif()
+-
+@@ -1027 +1012 @@ if (UNIX AND NOT APPLE)
+-	list(APPEND LIBS xkbcommon xkbcommon-x11)
++	list(APPEND LIBS xkbcommon)
+@@ -1048,3 +1032,0 @@ if (UNIX AND NOT APPLE)
+-		src/internal/keyboard/x11-layout-resolver.hpp
+-		src/internal/keyboard/x11-layout-resolver.cpp
+-
+diff --git a/src/server/src/internal/keyboard/layout-resolver.cpp b/src/server/src/internal/keyboard/layout-resolver.cpp
+index a77e2ec..43752fc 100644
+--- a/src/server/src/internal/keyboard/layout-resolver.cpp
++++ b/src/server/src/internal/keyboard/layout-resolver.cpp
+@@ -10 +9,0 @@
+-#include "x11-layout-resolver.hpp"
+@@ -21 +19,0 @@ std::unique_ptr<LayoutResolver> createLayoutResolver() {
+-  if (Environment::isX11()) { return std::make_unique<X11LayoutResolver>(); }
+diff --git a/src/server/src/services/clipboard/clipboard-service.cpp b/src/server/src/services/clipboard/clipboard-service.cpp
+index b831531..5df4ea9 100644
+--- a/src/server/src/services/clipboard/clipboard-service.cpp
++++ b/src/server/src/services/clipboard/clipboard-service.cpp
+@@ -14,3 +13,0 @@
+-#ifdef Q_OS_LINUX
+-#include "x11/x11-clipboard-server.hpp"
+-#endif
+@@ -950 +946,0 @@ ClipboardService::ClipboardService(const std::filesystem::path &path, AppService
+-    factory.registerServer<X11ClipboardServer>();
+diff --git a/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.cpp b/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.cpp
+index e00ace6..8721084 100644
+--- a/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.cpp
++++ b/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.cpp
+@@ -12 +11,0 @@
+-#include "services/global-shortcuts/x11-global-shortcut-backend.hpp"
+@@ -22 +20,0 @@ std::unique_ptr<AbstractGlobalShortcutBackend> createGlobalShortcutBackend() {
+-  if (Environment::isX11()) { return std::make_unique<X11GlobalShortcutBackend>(); }
+diff --git a/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.hpp b/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.hpp
+index e66cc01..dc289e7 100644
+--- a/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.hpp
++++ b/src/server/src/services/global-shortcuts/global-shortcut-backend-factory.hpp
+@@ -7,2 +7,2 @@
+- * reports `isSupported() == false`) when none is viable. X11 (XGrabKey) / macOS / Windows backends
+- * slot in here; Wayland is intentionally unsupported for now.
++ * reports `isSupported() == false`) when none is viable. Linux Wayland,
++ * macOS, and Windows backends are selected when supported.
+diff --git a/src/server/src/services/window-manager/window-manager.cpp b/src/server/src/services/window-manager/window-manager.cpp
+index 49f0c83..1387857 100644
+--- a/src/server/src/services/window-manager/window-manager.cpp
++++ b/src/server/src/services/window-manager/window-manager.cpp
+@@ -15 +14,0 @@
+-#include "x11/x11-window-manager.hpp"
+@@ -33 +31,0 @@ std::vector<std::unique_ptr<AbstractWindowManager>> WindowManager::createCandida
+-  candidates.emplace_back(std::make_unique<X11WindowManager>());
+diff --git a/src/server/src/utils/environment.hpp b/src/server/src/utils/environment.hpp
+index 62b0e33..4133aa2 100644
+--- a/src/server/src/utils/environment.hpp
++++ b/src/server/src/utils/environment.hpp
+@@ -46,2 +45,0 @@ inline bool isWaylandSession() {
+-inline bool isX11() { return QGuiApplication::platformName() == "xcb"; }
+-
+@@ -175,2 +172,0 @@ inline QString getEnvironmentDescription() {
+-  } else {
+-    desc += "/X11";
