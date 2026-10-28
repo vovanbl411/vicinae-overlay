@@ -1,0 +1,169 @@
+name: Prepare Vicinae stable release
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Show the release plan without preparing or publishing a candidate
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: vicinae-stable-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      candidate: ${{ steps.plan.outputs.candidate }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+    steps:
+      - name: Check out base without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Portage manifest tooling
+        run: python -m pip install pkgdev
+
+      - name: Plan and prepare candidate
+        id: plan
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          args=(
+            --repository "$GITHUB_REPOSITORY"
+            --repo-dir "$GITHUB_WORKSPACE"
+            --artifact-dir "$RUNNER_TEMP/vicinae-candidate"
+            --output "$GITHUB_OUTPUT"
+          )
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/prepare_stable_release.py "${args[@]}"
+
+      - name: Run pkgcheck on the candidate and fallback
+        if: steps.plan.outputs.candidate == 'true'
+        uses: pkgcore/pkgcheck-action@v1
+        with:
+          args: gui-apps/vicinae
+
+      - name: Upload allowlisted package files
+        if: steps.plan.outputs.candidate == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicinae-stable-candidate
+          path: ${{ runner.temp }}/vicinae-candidate
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.candidate == 'true' &&
+      needs.prepare.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out base branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download candidate files
+        uses: actions/download-artifact@v4
+        with:
+          name: vicinae-stable-candidate
+          path: ${{ runner.temp }}/vicinae-candidate
+
+      - name: Validate artifact and checked base
+        id: validate
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/prepare_stable_release.py \
+            --repo-dir "$GITHUB_WORKSPACE" \
+            --check-artifact "$RUNNER_TEMP/vicinae-candidate"
+          git fetch origin main --no-tags
+          current_base=$(git rev-parse refs/remotes/origin/main)
+          if [[ "$current_base" != "$BASE_SHA" ]]; then
+            printf 'base changed after validation: expected %s, found %s\n' \
+              "$BASE_SHA" "$current_base" >&2
+            exit 1
+          fi
+          existing_pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --head "$GITHUB_REPOSITORY_OWNER:automation/vicinae-stable-update" \
+            --json number --jq '.[0].number // empty')
+          if [[ -n "$existing_pr" ]]; then
+            printf 'Draft PR #%s already exists; skipping publication\n' \
+              "$existing_pr"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin \
+            automation/vicinae-stable-update >/dev/null 2>&1; then
+            echo "automation branch exists without an open PR;" \
+              "stopping without overwriting it" >&2
+            exit 1
+          fi
+
+      - name: Create deterministic branch and Draft PR
+        if: steps.validate.outputs.skip != 'true'
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp -a "$RUNNER_TEMP/vicinae-candidate/gui-apps/vicinae/." \
+            gui-apps/vicinae/
+          git add -- gui-apps/vicinae/Manifest \
+            gui-apps/vicinae/vicinae-*.ebuild \
+            gui-apps/vicinae/files/vicinae-*.patch
+          python3 scripts/prepare_stable_release.py \
+            --repo-dir "$GITHUB_WORKSPACE" --validate-staged
+          git switch -c automation/vicinae-stable-update
+          bot_email='41898282+github-actions[bot]@users.noreply.github.com'
+          git -c user.name='github-actions[bot]' \
+            -c user.email="$bot_email" \
+            commit -m 'chore: prepare Vicinae stable release'
+          git fetch origin main --no-tags
+          current_base=$(git rev-parse refs/remotes/origin/main)
+          if [[ "$current_base" != "$BASE_SHA" ]]; then
+            printf 'base changed before publication: expected %s, found %s\n' \
+              "$BASE_SHA" "$current_base" >&2
+            exit 1
+          fi
+          git push --set-upstream origin automation/vicinae-stable-update
+          cat > "$RUNNER_TEMP/pr-body.md" <<'EOF'
+          Automated stable-release candidate. Patch application, npm lockfile
+          consistency, Manifest generation, and pkgcheck passed before
+          publication.
+
+          Please review the ebuild and packaging changes manually before
+          merging. This candidate has not been installed or runtime-validated.
+          Merge, installation, and runtime checks remain manual.
+          EOF
+          gh pr create --repo "$GITHUB_REPOSITORY" --draft --base main \
+            --head automation/vicinae-stable-update \
+            --title 'chore: prepare Vicinae stable release' \
+            --body-file "$RUNNER_TEMP/pr-body.md"

@@ -77,11 +77,18 @@ def npm_packages(source_root):
     return packages
 
 
-def read_ebuild():
-    candidates = sorted(PACKAGE_DIR.glob("vicinae-*.ebuild"))
-    if len(candidates) != 1:
-        raise CheckError(f"expected one vicinae ebuild, found {len(candidates)}")
-    path = candidates[0]
+def read_ebuild(ebuild_path=None):
+    if ebuild_path is not None:
+        path = ebuild_path.resolve()
+        if not path.is_file() or path.suffix != ".ebuild":
+            raise CheckError(f"not an ebuild file: {path}")
+    else:
+        candidates = sorted(PACKAGE_DIR.glob("vicinae-*.ebuild"))
+        if len(candidates) != 1:
+            raise CheckError(
+                f"expected one vicinae ebuild, found {len(candidates)}; pass --ebuild explicitly"
+            )
+        path = candidates[0]
     return path, path.read_text(encoding="utf-8"), path.name.removesuffix(".ebuild")
 
 
@@ -132,8 +139,8 @@ def expected_from_ebuild(text, package_name):
     return distfiles, src_uri
 
 
-def check_manifest(expected_names, package_name):
-    manifest = PACKAGE_DIR / "Manifest"
+def check_manifest(expected_names, package_name, package_dir):
+    manifest = package_dir / "Manifest"
     if not manifest.is_file():
         raise CheckError(f"missing Manifest: {manifest}")
     manifest_names = set()
@@ -162,12 +169,13 @@ def replace_block(text, name, content):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", type=Path, default=Path.cwd(), help="extracted Vicinae source tree")
+    parser.add_argument("--ebuild", type=Path, help="ebuild to check or update")
     parser.add_argument("--generate", action="store_true", help="rewrite the existing npm blocks in the ebuild")
     args = parser.parse_args()
 
     try:
         packages = npm_packages(args.source_dir.resolve())
-        ebuild_path, ebuild_text, package_name = read_ebuild()
+        ebuild_path, ebuild_text, package_name = read_ebuild(args.ebuild)
         expected_block, expected_uri_block = npm_blocks(packages)
         expected_names = {
             line.strip().replace("${P}", package_name)
@@ -199,7 +207,7 @@ def main():
                 "NPM_SRC_URI differs; "
                 f"missing={summarize(missing)}, extra={summarize(extra)}"
             )
-        check_manifest(expected_names, package_name)
+        check_manifest(expected_names, package_name, ebuild_path.parent)
         print(f"npm lockfiles, ebuild URLs/distfiles, and Manifest agree ({len(packages)} Linux amd64 distfiles)")
     except CheckError as error:
         print(f"npm distfile check failed: {error}", file=sys.stderr)

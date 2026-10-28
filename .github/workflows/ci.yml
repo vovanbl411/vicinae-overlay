@@ -18,16 +18,25 @@ jobs:
         with:
           args: gui-apps/vicinae
 
-      - name: Fetch and patch Vicinae sources
+      - name: Test release decision logic
         run: |
-          mkdir -p "$RUNNER_TEMP/vicinae-src"
-          curl --fail --location --silent --show-error \
-            https://github.com/vicinaehq/vicinae/archive/refs/tags/v0.29.2.tar.gz \
-            | tar -xz --strip-components=1 -C "$RUNNER_TEMP/vicinae-src"
-          patch --batch --fuzz=0 -p1 -d "$RUNNER_TEMP/vicinae-src" \
-            < gui-apps/vicinae/files/vicinae-0.29.2-wayland-only.patch
-          patch --batch --fuzz=0 -p1 -d "$RUNNER_TEMP/vicinae-src" \
-            < gui-apps/vicinae/files/vicinae-0.29.2-destdir-install.patch
+          python3 -m unittest discover -s tests
 
-      - name: Check npm distfiles and Manifest
-        run: python3 scripts/check-npm-distfiles.py --source-dir "$RUNNER_TEMP/vicinae-src"
+      - name: Check patches and npm distfiles for every ebuild
+        run: |
+          shopt -s nullglob
+          for ebuild in gui-apps/vicinae/vicinae-*.ebuild; do
+            version=${ebuild##*/vicinae-}
+            version=${version%.ebuild}
+            source_dir="$RUNNER_TEMP/vicinae-$version"
+            archive_url="https://github.com/vicinaehq/vicinae/archive/refs/tags"
+            mkdir -p "$source_dir"
+            curl --fail --location --silent \
+              --show-error \
+              "$archive_url/v$version.tar.gz" \
+              | tar -xz --strip-components=1 -C "$source_dir"
+            python3 scripts/prepare_stable_release.py \
+              --check-source --ebuild "$ebuild" --source-dir "$source_dir"
+            python3 scripts/check-npm-distfiles.py \
+              --source-dir "$source_dir" --ebuild "$ebuild"
+          done
