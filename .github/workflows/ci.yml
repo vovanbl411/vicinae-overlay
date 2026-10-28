@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run pkgcheck
+        uses: pkgcore/pkgcheck-action@v1
+        with:
+          args: gui-apps/vicinae
+
+      - name: Fetch and patch Vicinae sources
+        run: |
+          mkdir -p "$RUNNER_TEMP/vicinae-src"
+          curl --fail --location --silent --show-error \
+            https://github.com/vicinaehq/vicinae/archive/refs/tags/v0.29.2.tar.gz \
+            | tar -xz --strip-components=1 -C "$RUNNER_TEMP/vicinae-src"
+          patch --batch --fuzz=0 -p1 -d "$RUNNER_TEMP/vicinae-src" \
+            < gui-apps/vicinae/files/vicinae-0.29.2-wayland-only.patch
+          patch --batch --fuzz=0 -p1 -d "$RUNNER_TEMP/vicinae-src" \
+            < gui-apps/vicinae/files/vicinae-0.29.2-destdir-install.patch
+
+      - name: Check npm distfiles and Manifest
+        run: python3 scripts/check-npm-distfiles.py --source-dir "$RUNNER_TEMP/vicinae-src"
