@@ -313,6 +313,15 @@ def run_checked(command, cwd):
     return result.stdout
 
 
+def remove_unused_patches(package_dir):
+    referenced = set()
+    for ebuild in package_dir.glob("vicinae-*.ebuild"):
+        referenced.update(f"{ebuild.stem}-{suffix}" for suffix in read_ebuild_patches(ebuild))
+    for patch in (package_dir / "files").glob("vicinae-*.patch"):
+        if patch.name not in referenced:
+            patch.unlink()
+
+
 def prepare_candidate(plan, root, artifact_dir):
     package_dir = root / PACKAGE
     ebuilds = current_ebuilds(package_dir)
@@ -360,15 +369,14 @@ def prepare_candidate(plan, root, artifact_dir):
                 old_patch.unlink()
 
         # Remove only patch files no longer referenced by any remaining ebuild.
-        referenced = set()
-        for path in package_dir.glob("vicinae-*.ebuild"):
-            referenced.update(f"{path.stem}-{suffix}" for suffix in read_ebuild_patches(path))
-        for path in (package_dir / "files").glob("vicinae-*.patch"):
-            if path.stem not in referenced:
-                path.unlink()
+        remove_unused_patches(package_dir)
 
-        # Portage's package tooling computes the Manifest from the actual SRC_URI.
-        run_checked(["pkgdev", "manifest", "--force", str(package_dir)], root)
+        # pkgdev computes Manifest checksums from the actual SRC_URI.
+        manifest_command = ["pkgdev", "manifest", "--force"]
+        if distdir := os.environ.get("DISTDIR"):
+            manifest_command.extend(("--distdir", distdir))
+        manifest_command.append(PACKAGE.as_posix())
+        run_checked(manifest_command, root)
         for version in (old_version, new_version):
             ebuild = package_dir / f"vicinae-{version}.ebuild"
             source = old_source if version == old_version else candidate_source
@@ -413,6 +421,20 @@ def validate_publish_paths(paths):
     unexpected = sorted(path for path in paths if not any(pattern.fullmatch(path) for pattern in allowed_patterns))
     if unexpected:
         raise PrepareError(f"generated diff includes paths outside the package allowlist: {unexpected}")
+
+
+def versioned_package_paths(package_dir):
+    paths = {"Manifest"} if (package_dir / "Manifest").exists() else set()
+    paths.update(
+        path.name for path in package_dir.glob("vicinae-*.ebuild")
+        if EBUILD_RE.fullmatch(path.name)
+    )
+    paths.update(
+        path.relative_to(package_dir).as_posix()
+        for path in (package_dir / "files").glob("vicinae-*.patch")
+        if re.fullmatch(r"vicinae-\d+\.\d+\.\d+-.+\.patch", path.name)
+    )
+    return paths
 
 
 def validate_artifact(artifact_dir, base_package_dir):
@@ -463,6 +485,48 @@ def validate_staged_paths(root):
     run_checked(["git", "diff", "--cached", "--check"], root)
 
 
+def apply_artifact(artifact_dir, package_dir):
+    validate_artifact(artifact_dir, package_dir)
+    artifact_dir = artifact_dir.resolve()
+    package_dir = package_dir.resolve()
+    artifact_package = artifact_dir / PACKAGE
+    artifact_paths = {
+        path.relative_to(artifact_package).as_posix()
+        for path in artifact_package.rglob("*")
+        if path.is_file()
+    }
+
+    current_paths = versioned_package_paths(package_dir)
+    expected_worktree_paths = {path.removeprefix(f"{PACKAGE.as_posix()}/") for path in artifact_paths}
+    for relative in sorted(current_paths - expected_worktree_paths):
+        path = package_dir / relative
+        if path.is_symlink() or not path.is_file():
+            raise PrepareError(f"refusing to remove unexpected package path: {relative}")
+        path.unlink()
+    for relative in sorted(expected_worktree_paths):
+        source = artifact_package / relative
+        target = package_dir / relative
+        if source.is_symlink() or not source.is_file():
+            raise PrepareError(f"candidate artifact contains an unsafe path: {relative}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    resulting_paths = versioned_package_paths(package_dir)
+    if resulting_paths != expected_worktree_paths:
+        raise PrepareError(
+            "applied candidate does not match its checked artifact; "
+            f"extra={sorted(resulting_paths-expected_worktree_paths)}, "
+            f"missing={sorted(expected_worktree_paths-resulting_paths)}"
+        )
+    actual_ebuilds = {path.name for path in package_dir.glob("vicinae-*.ebuild")}
+    expected_ebuilds = {Path(path).name for path in expected_worktree_paths if path.endswith(".ebuild")}
+    if actual_ebuilds != expected_ebuilds:
+        raise PrepareError(
+            "package must contain exactly the checked fallback and candidate ebuilds; "
+            f"found={sorted(actual_ebuilds)}, expected={sorted(expected_ebuilds)}"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"), help="overlay owner/name")
@@ -474,6 +538,7 @@ def main():
     parser.add_argument("--ebuild", type=Path, help="ebuild used with --check-source")
     parser.add_argument("--source-dir", type=Path, help="extracted upstream source tree")
     parser.add_argument("--check-artifact", type=Path, help="validate an artifact before applying it in the publisher job")
+    parser.add_argument("--apply-artifact", type=Path, help="apply an allowlisted artifact and its deletions in the publisher job")
     parser.add_argument("--validate-staged", action="store_true", help="validate staged paths in the publisher job")
     args = parser.parse_args()
     root = args.repo_dir.resolve()
@@ -487,6 +552,10 @@ def main():
         if args.check_artifact:
             validate_artifact(args.check_artifact, root / PACKAGE)
             print("candidate artifact contains only allowlisted ebuild, patch, and Manifest files")
+            return 0
+        if args.apply_artifact:
+            apply_artifact(args.apply_artifact, root / PACKAGE)
+            print("candidate artifact applied; obsolete fallback files removed and package paths verified")
             return 0
         if args.validate_staged:
             validate_staged_paths(root)

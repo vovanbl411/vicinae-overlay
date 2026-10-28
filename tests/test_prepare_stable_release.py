@@ -7,9 +7,11 @@ from scripts.prepare_stable_release import (
     PrepareError,
     Release,
     apply_patches,
+    apply_artifact,
     decide,
     parse_release,
     publish_candidate,
+    remove_unused_patches,
     rotation_policy,
     validate_artifact,
     validate_packaging_stability,
@@ -80,6 +82,62 @@ class RotationAndGuardTests(unittest.TestCase):
             fallback.write_text(content + "# changed\n", encoding="utf-8")
             with self.assertRaisesRegex(PrepareError, "preserve the current ebuild unchanged"):
                 validate_artifact(root / "artifact", base)
+
+    def test_patch_cleanup_keeps_referenced_patch_filenames(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "gui-apps/vicinae"
+            files = package / "files"
+            files.mkdir(parents=True)
+            for version in ("0.29.2", "0.30.0"):
+                (package / f"vicinae-{version}.ebuild").write_text(
+                    'PATCHES=(\n "${FILESDIR}/${P}-wayland-only.patch"\n'
+                    ' "${FILESDIR}/${P}-destdir-install.patch"\n)\n',
+                    encoding="utf-8",
+                )
+                for name in ("wayland-only", "destdir-install"):
+                    (files / f"vicinae-{version}-{name}.patch").write_text("patch\n", encoding="utf-8")
+            unused = files / "vicinae-0.28.0-unused.patch"
+            unused.write_text("unused\n", encoding="utf-8")
+            remove_unused_patches(package)
+            self.assertTrue((files / "vicinae-0.29.2-wayland-only.patch").exists())
+            self.assertTrue((files / "vicinae-0.29.2-destdir-install.patch").exists())
+            self.assertTrue((files / "vicinae-0.30.0-wayland-only.patch").exists())
+            self.assertTrue((files / "vicinae-0.30.0-destdir-install.patch").exists())
+            self.assertFalse(unused.exists())
+
+    def test_artifact_application_removes_obsolete_fallback_and_patches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "checkout/gui-apps/vicinae"
+            artifact_package = root / "artifact/gui-apps/vicinae"
+            (package / "files").mkdir(parents=True)
+            (artifact_package / "files").mkdir(parents=True)
+            content = (
+                'PATCHES=(\n "${FILESDIR}/${P}-wayland-only.patch"\n'
+                ' "${FILESDIR}/${P}-destdir-install.patch"\n)\n'
+            )
+            for version in ("0.29.2", "0.30.0"):
+                (package / f"vicinae-{version}.ebuild").write_text(content, encoding="utf-8")
+                for name in ("wayland-only", "destdir-install"):
+                    (package / "files" / f"vicinae-{version}-{name}.patch").write_text("patch\n", encoding="utf-8")
+            unrelated = package / "files/vicinae-local.patch"
+            unrelated.write_text("local\n", encoding="utf-8")
+            (package / "Manifest").write_text("base\n", encoding="utf-8")
+            for version in ("0.30.0", "0.31.0"):
+                (artifact_package / f"vicinae-{version}.ebuild").write_text(content, encoding="utf-8")
+                for name in ("wayland-only", "destdir-install"):
+                    (artifact_package / "files" / f"vicinae-{version}-{name}.patch").write_text("patch\n", encoding="utf-8")
+            (artifact_package / "Manifest").write_text("candidate\n", encoding="utf-8")
+
+            apply_artifact(root / "artifact", package)
+
+            self.assertFalse((package / "vicinae-0.29.2.ebuild").exists())
+            self.assertTrue((package / "vicinae-0.30.0.ebuild").exists())
+            self.assertTrue((package / "vicinae-0.31.0.ebuild").exists())
+            self.assertEqual(len(list(package.glob("vicinae-*.ebuild"))), 2)
+            self.assertFalse((package / "files/vicinae-0.29.2-wayland-only.patch").exists())
+            self.assertEqual(len(list((package / "files").glob("vicinae-*.patch"))), 5)
+            self.assertTrue(unrelated.exists())
 
     def test_incompatible_patch_stops_without_fuzz(self):
         with tempfile.TemporaryDirectory() as temporary:

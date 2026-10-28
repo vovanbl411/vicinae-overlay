@@ -38,15 +38,46 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Install Portage manifest tooling
-        run: python -m pip install pkgdev
+      - name: Fetch Gentoo eclasses, profiles, and licenses
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse \
+            https://github.com/gentoo/gentoo.git "$RUNNER_TEMP/gentoo"
+          git -C "$RUNNER_TEMP/gentoo" sparse-checkout set \
+            eclass licenses metadata profiles
+
+      - name: Install pkgdev with an isolated Portage repository config
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          venv="$RUNNER_TEMP/pkgdev-venv"
+          portage_config="$RUNNER_TEMP/etc/portage"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install pkgdev
+          mkdir -p "$portage_config/repos.conf"
+          cat > "$portage_config/repos.conf/repos.conf" <<EOF
+          [DEFAULT]
+          main-repo = gentoo
+
+          [gentoo]
+          location = $RUNNER_TEMP/gentoo
+          masters =
+
+          [vicinae-overlay]
+          location = $GITHUB_WORKSPACE
+          masters = gentoo
+          EOF
+          ln -s "$RUNNER_TEMP/gentoo/profiles/default/linux/amd64/23.0" \
+            "$portage_config/make.profile"
+          echo "$venv/bin" >> "$GITHUB_PATH"
 
       - name: Plan and prepare candidate
         id: plan
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
+          DISTDIR: ${{ runner.temp }}/distfiles
         run: |
+          mkdir -p "$DISTDIR"
           args=(
             --repository "$GITHUB_REPOSITORY"
             --repo-dir "$GITHUB_WORKSPACE"
@@ -134,11 +165,10 @@ jobs:
           BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp -a "$RUNNER_TEMP/vicinae-candidate/gui-apps/vicinae/." \
-            gui-apps/vicinae/
-          git add -- gui-apps/vicinae/Manifest \
-            gui-apps/vicinae/vicinae-*.ebuild \
-            gui-apps/vicinae/files/vicinae-*.patch
+          python3 scripts/prepare_stable_release.py \
+            --repo-dir "$GITHUB_WORKSPACE" \
+            --apply-artifact "$RUNNER_TEMP/vicinae-candidate"
+          git add -A -- gui-apps/vicinae
           python3 scripts/prepare_stable_release.py \
             --repo-dir "$GITHUB_WORKSPACE" --validate-staged
           git switch -c automation/vicinae-stable-update
