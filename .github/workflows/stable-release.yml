@@ -22,19 +22,19 @@ permissions:
 jobs:
   prepare:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       candidate: ${{ steps.plan.outputs.candidate }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
     steps:
       - name: Check out base without persisting credentials
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.x"
 
@@ -98,7 +98,7 @@ jobs:
 
       - name: Upload allowlisted package files
         if: steps.plan.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: vicinae-stable-candidate
           path: ${{ runner.temp }}/vicinae-candidate
@@ -110,19 +110,19 @@ jobs:
     if: >-
       needs.prepare.outputs.candidate == 'true' &&
       needs.prepare.outputs.dry_run != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
     steps:
       - name: Check out base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           ref: main
           fetch-depth: 0
 
       - name: Download candidate files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: vicinae-stable-candidate
           path: ${{ runner.temp }}/vicinae-candidate
