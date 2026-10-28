@@ -29,12 +29,12 @@ jobs:
       base_sha: ${{ steps.plan.outputs.base_sha }}
     steps:
       - name: Check out base without persisting credentials
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-python@v7.1.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.x"
 
@@ -92,13 +92,23 @@ jobs:
 
       - name: Run pkgcheck on the candidate and fallback
         if: steps.plan.outputs.candidate == 'true'
-        uses: pkgcore/pkgcheck-action@v1
-        with:
-          args: gui-apps/vicinae
+        run: |
+          docker run --rm \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace,readonly" \
+            --workdir /workspace \
+            --entrypoint /usr/bin/bash \
+            ghcr.io/pkgcore/pkgcheck@sha256:732a539ca77fefa211bc9dfb02bd99770cb8c3edfadac55767378353f59aeb2a \
+            -euo pipefail -c '
+              pmaint sync --import-masters .
+              pmaint regen --dir ~/.cache/pkgcheck/repos .
+              git config --global --add safe.directory /workspace
+              pkgcheck --color y ci --failures /tmp/pkgcheck-failures.json \
+                --exit GentooCI gui-apps/vicinae
+            '
 
       - name: Upload allowlisted package files
         if: steps.plan.outputs.candidate == 'true'
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vicinae-stable-candidate
           path: ${{ runner.temp }}/vicinae-candidate
@@ -116,13 +126,14 @@ jobs:
       pull-requests: write
     steps:
       - name: Check out base branch
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Download candidate files
-        uses: actions/download-artifact@v8.0.2
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vicinae-stable-candidate
           path: ${{ runner.temp }}/vicinae-candidate
@@ -163,7 +174,6 @@ jobs:
         if: steps.validate.outputs.skip != 'true'
         env:
           BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 scripts/prepare_stable_release.py \
             --repo-dir "$GITHUB_WORKSPACE" \
@@ -183,7 +193,6 @@ jobs:
               "$BASE_SHA" "$current_base" >&2
             exit 1
           fi
-          git push --set-upstream origin automation/vicinae-stable-update
           cat > "$RUNNER_TEMP/pr-body.md" <<'EOF'
           Automated stable-release candidate. Patch application, npm lockfile
           consistency, Manifest generation, and pkgcheck passed before
@@ -193,6 +202,22 @@ jobs:
           merging. This candidate has not been installed or runtime-validated.
           Merge, installation, and runtime checks remain manual.
           EOF
+
+      - name: Push automation branch
+        if: steps.validate.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)" \
+            git push --set-upstream origin automation/vicinae-stable-update
+
+      - name: Create Draft PR
+        if: steps.validate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           gh pr create --repo "$GITHUB_REPOSITORY" --draft --base main \
             --head automation/vicinae-stable-update \
             --title 'chore: prepare Vicinae stable release' \

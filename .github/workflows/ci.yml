@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,12 +12,24 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run pkgcheck
-        uses: pkgcore/pkgcheck-action@v1
-        with:
-          args: gui-apps/vicinae
+        run: |
+          docker run --rm \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace,readonly" \
+            --workdir /workspace \
+            --entrypoint /usr/bin/bash \
+            ghcr.io/pkgcore/pkgcheck@sha256:732a539ca77fefa211bc9dfb02bd99770cb8c3edfadac55767378353f59aeb2a \
+            -euo pipefail -c '
+              pmaint sync --import-masters .
+              pmaint regen --dir ~/.cache/pkgcheck/repos .
+              git config --global --add safe.directory /workspace
+              pkgcheck --color y ci --failures /tmp/pkgcheck-failures.json \
+                --exit GentooCI gui-apps/vicinae
+            '
 
       - name: Test release decision logic
         run: |
